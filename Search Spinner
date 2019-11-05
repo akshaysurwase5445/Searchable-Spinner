@@ -1,0 +1,740 @@
+
+
+      Add this library to the project
+ 
+     compile 'com.toptoche.searchablespinner:searchablespinnerlibrary:1.3.1'
+ 
+ import android.app.AlertDialog;
+import android.app.ProgressDialog;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.StrictMode;
+import android.support.annotation.NonNull;
+import android.support.design.widget.CoordinatorLayout;
+import android.support.design.widget.Snackbar;
+import android.support.v4.app.Fragment;
+import android.support.v4.widget.SwipeRefreshLayout;
+import android.support.v7.widget.LinearLayoutManager;
+import android.support.v7.widget.RecyclerView;
+import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import com.toptoche.searchablespinnerlibrary.SearchableSpinner;
+import com.xtrovix.truckittransport.R;
+import com.xtrovix.truckittransport.connection.APIClient;
+import com.xtrovix.truckittransport.constant.Session;
+import com.xtrovix.truckittransport.drawernavigation.DrawerNavigationActivity;
+import com.xtrovix.truckittransport.login.LoginActivity;
+
+
+import com.xtrovix.truckittransport.searchtrips.adapter.SearchTripAdapter;
+import com.xtrovix.truckittransport.searchtrips.model.SearchTripData;
+import com.xtrovix.truckittransport.searchtrips.model.SearchTripDatum;
+import com.xtrovix.truckittransport.searchtrips.model.SearchTripModel;
+import com.xtrovix.truckittransport.searchtrips.model.destination_search.DestinationSearchDatum;
+import com.xtrovix.truckittransport.searchtrips.model.destination_search.DestinationSearchModel;
+import com.xtrovix.truckittransport.searchtrips.model.source_search.SourceSearchDatum;
+import com.xtrovix.truckittransport.searchtrips.model.source_search.SourceSearchModel;
+import com.xtrovix.truckittransport.utils.ConnectionDetector;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+
+import static android.content.Context.MODE_PRIVATE;
+import static android.support.constraint.Constraints.TAG;
+import static com.xtrovix.truckittransport.login.LoginActivity.globalPreferrenceName;
+
+
+public class SearchTripsFragment extends Fragment {
+
+
+    SearchableSpinner spinner_source, spinner_destination;
+    SwipeRefreshLayout mSwipeRefreshLayout;
+    List<String> source_city;
+    // List<String> destination_city;
+    private SearchTripInterface searchTripInterface;
+    private SharedPreferences sharedPreferences;
+    private String token;
+
+    Session session;
+
+    RecyclerView recyclerView;
+    //SearchTripAdapter adapter;
+    SearchTripAdapter adapter;
+    private List<SearchTripModel> searchTripsModels;
+    private ProgressDialog progress;
+
+    private TextView search_trip_searchBtn;
+
+    String str_spinner_source = "null", str_spinner_destination = "null";
+    private TextView textview_no_data;
+    private CoordinatorLayout search_frag_layout;
+
+    // Pagination
+    private int page = 1;
+    private int item_count = 10;
+    private ProgressBar page_progress;
+    private boolean isLoading = true;
+    private int visibleThreshold = 10;
+    private int pastVisiblesItems, visibleItemCount, totalItemCount, previous_total = 0;
+    private LinearLayoutManager linearLayoutManager;
+
+    List<DestinationSearchDatum> destinationSearchDatum;
+    DestinationSearchModel destinationSearchModel;
+    private boolean networkState;
+    LinearLayout linearLayout;
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+    }
+
+    @Override
+    public View onCreateView(LayoutInflater inflater, ViewGroup container,
+                             Bundle savedInstanceState) {
+        // Inflate the layout for this fragment
+        View view = inflater.inflate(R.layout.fragment_search_trips, container, false);
+        session = new Session(getContext());
+
+        if (android.os.Build.VERSION.SDK_INT > 9) {
+            StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
+            StrictMode.setThreadPolicy(policy);
+        }
+
+        linearLayout = view.findViewById(R.id.parent_lyt);
+
+        checkInternetConnection();
+
+
+        // Set title to Actionbar
+        ((DrawerNavigationActivity) getActivity()).setTitle("Search Trips");
+
+        // Searchable spinners
+        spinner_source = view.findViewById(R.id.spinner_source);
+        spinner_destination = view.findViewById(R.id.spinner_destination);
+        mSwipeRefreshLayout = (SwipeRefreshLayout) view.findViewById(R.id.swipe_container);
+
+        // initialase arraylist
+        source_city = new ArrayList<>();
+        destinationSearchDatum = new ArrayList<>();
+
+        //set title to spinner
+        spinner_source.setTitle("Select Source");
+        spinner_source.setPositiveButton("Close");
+
+        //set title to spinner
+        spinner_destination.setTitle("Select Destination");
+        spinner_destination.setPositiveButton("Close");
+
+        // Get Token From SharedPref
+        sharedPreferences = getActivity().getSharedPreferences(globalPreferrenceName, MODE_PRIVATE);
+        token = sharedPreferences.getString("token", null);
+        Log.d(TAG, "Firebase_token_My_bid " + token);
+
+        // GET Citys SearchTripData for Spinners
+
+
+        // Progress bar Start
+        progress = new ProgressDialog(getActivity());
+        progress.setMessage("Loading...");
+        progress.setProgressStyle(ProgressDialog.STYLE_SPINNER);
+        progress.setIndeterminate(true);
+        progress.show();
+
+        networkState = checkInternetConnection();
+
+        if (networkState) {
+            getSourceCity();
+            getDestinationCity();
+        } else {
+            Toast.makeText(getActivity(), "Please check your Internet Connection", Toast.LENGTH_SHORT).show();
+            progress.dismiss();
+        }
+        // initialize recyclerView
+        recyclerView = view.findViewById(R.id.recyclerview_search_trip_list);
+        recyclerView.setHasFixedSize(true);
+        linearLayoutManager = new LinearLayoutManager(getActivity(), LinearLayoutManager.VERTICAL, false);
+        recyclerView.setLayoutManager(linearLayoutManager);
+        //recyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
+
+        page_progress = view.findViewById(R.id.page_progress);
+
+        // Hiden Textview
+        textview_no_data = view.findViewById(R.id.textview_no_data);
+        search_frag_layout = view.findViewById(R.id.search_frag_layout);
+
+        // Arraylist initialize
+        searchTripsModels = new ArrayList<>();
+
+        //search Button
+        search_trip_searchBtn = view.findViewById(R.id.search_trip_searchBtn);
+
+        search_trip_searchBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+
+                networkState = checkInternetConnection();
+
+                if (networkState) {
+
+                    Log.d("spinnerCity", "onClick: " + spinner_source.getSelectedItem().toString());
+                    Log.d("spinnerCity", "onClick: " + spinner_destination.getSelectedItem().toString());
+
+                    if (spinner_source.getSelectedItem().toString().equalsIgnoreCase("Select Source")) {
+                        showToast("Please Select Source");
+                    } else if (spinner_destination.getSelectedItem().toString().equalsIgnoreCase("Select Destination")) {
+                        showToast("Please Select Destination");
+                    } else {
+                        progress.show();
+
+                        // Call method
+
+                        getSearchTrips(spinner_source.getSelectedItem().toString(), spinner_destination.getSelectedItem().toString(), 1);
+
+                        mSwipeRefreshLayout.setOnRefreshListener(new SwipeRefreshLayout.OnRefreshListener() {
+                            @Override
+                            public void onRefresh() {
+                                // cancel the Visual indication of a refresh
+                                mSwipeRefreshLayout.setRefreshing(false);
+
+                                final Handler handler = new Handler();
+                                handler.postDelayed(new Runnable() {
+                                    @Override
+                                    public void run() {
+
+                                        getSearchTrips(spinner_source.getSelectedItem().toString(), spinner_destination.getSelectedItem().toString(), 1);
+
+                                    }
+                                }, 1000);
+
+                            }
+                        });
+
+                    }
+                }
+
+
+            }
+        });
+
+
+
+    private void getSearchTrips(String source, String destination, int page) {
+
+
+        searchTripInterface = APIClient.getClient().create(SearchTripInterface.class);
+
+        Call<SearchTripModel> call = searchTripInterface.searchTrips("Bearer " + token, source, destination, page);
+
+        call.enqueue(new Callback<SearchTripModel>() {
+            @Override
+            public void onResponse(Call<SearchTripModel> call, Response<SearchTripModel> response) {
+
+
+                if (response.toString().contains("code=200")) {
+
+
+                    if (response.body().getStatus() == 1) {
+
+                        SearchTripModel searchTripsModel = response.body();
+
+                        SearchTripData result = searchTripsModel.getData();
+
+                        List<SearchTripDatum> searchTripData = result.getData();
+
+                        progress.dismiss();
+
+
+                        // Progress bar Close
+                        if (searchTripData.isEmpty()) {
+
+                            textview_no_data.setVisibility(View.VISIBLE);
+                            recyclerView.setVisibility(View.GONE);
+                            progress.dismiss();
+
+                        } else {
+
+                            // Set List here to Adapter
+                            adapter = new SearchTripAdapter(searchTripData, getActivity());
+                            recyclerView.setAdapter(adapter);
+                            progress.dismiss();
+
+                        }
+                    }
+
+                    if (response.body().getStatus() == 0) {
+                        Toast.makeText(getActivity(), "" + response.body().getMsg(), Toast.LENGTH_SHORT).show();
+                        progress.dismiss();
+                    }
+                }
+
+
+                if (response.toString().contains("code=401")) {
+
+                    //showToast("Your Session has expired...");
+                    progress.dismiss();
+
+                    LayoutInflater factory = LayoutInflater.from(getActivity());
+                    final View deleteDialogView = factory.inflate(R.layout.raw_for_session_expired, null);
+                    final AlertDialog deleteDialog = new AlertDialog.Builder(getActivity()).create();
+                    deleteDialog.setView(deleteDialogView);
+
+                    deleteDialogView.findViewById(R.id.session_exp_login).setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+
+                            session.setLoggedin(false);
+                            getActivity().finish();
+                            Intent i = new Intent(getActivity(), LoginActivity.class);
+                            startActivity(i);
+                            progress.dismiss();
+
+                        }
+                    });
+
+
+                    deleteDialog.show();
+                    deleteDialog.setCancelable(false);
+
+                }
+
+            }
+
+            @Override
+            public void onFailure(Call<SearchTripModel> call, Throwable t) {
+
+                Log.d("error_nearme", "onFailure: " + t.getMessage());
+                progress.dismiss();
+
+            }
+        });
+
+
+    }
+
+    
+
+    // ********************************** Method ****************************************** //
+
+    private void getDestinationCity() {
+
+        // Add data here first and Clear
+        destinationSearchDatum.clear();
+        //destinationSearchDatum.add(0, "Select Destination");
+
+        searchTripInterface = APIClient.getClient().create(SearchTripInterface.class);
+
+        Call<DestinationSearchModel> call = searchTripInterface.getdestination("Bearer " + token);
+
+        call.enqueue(new Callback<DestinationSearchModel>() {
+            @Override
+            public void onResponse(Call<DestinationSearchModel> call, Response<DestinationSearchModel> response) {
+
+
+                if (response.toString().contains("code=200")) {
+                    if (response.body().getStatus() == 1) {
+
+
+                        destinationSearchModel = response.body();
+
+                        Log.d(TAG, "onResponse:zxcz " + destinationSearchModel);
+                        destinationSearchDatum = destinationSearchModel.getData();
+
+                        ArrayList<String> citylist = new ArrayList<>();
+
+                        for (int i = 0; i < destinationSearchDatum.size(); i++) {
+
+                            citylist.add(destinationSearchDatum.get(i).getCity());
+
+                        }
+                        citylist.add(0, "Select Destination");
+
+                        ArrayAdapter<String> adapter1 = new ArrayAdapter<String>(
+                                getActivity(), R.layout.spinners_layout,
+                                citylist
+                        );
+
+                        //set adapter to spinner
+                        spinner_destination.setAdapter(adapter1);
+                        linearLayout.setVisibility(View.VISIBLE);
+                        progress.dismiss();
+
+
+                    } else if (response.body().getStatus() == 0) {
+
+                        Toast.makeText(getActivity(), "" + response.body().getMsg(), Toast.LENGTH_SHORT).show();
+                    }
+                } else if (response.toString().contains("code=401")) {
+
+                    //showToast("Your Session has expired...");
+                    progress.dismiss();
+
+                    LayoutInflater factory = LayoutInflater.from(getActivity());
+                    final View deleteDialogView = factory.inflate(R.layout.raw_for_session_expired, null);
+                    final AlertDialog deleteDialog = new AlertDialog.Builder(getActivity()).create();
+                    deleteDialog.setView(deleteDialogView);
+
+                    deleteDialogView.findViewById(R.id.session_exp_login).setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+
+                            session.setLoggedin(false);
+                            getActivity().finish();
+                            Intent i = new Intent(getActivity(), LoginActivity.class);
+                            startActivity(i);
+
+                        }
+                    });
+
+
+                    deleteDialog.show();
+                    deleteDialog.setCancelable(false);
+
+
+                }
+
+            }
+
+            @Override
+            public void onFailure(Call<DestinationSearchModel> call, Throwable t) {
+                progress.dismiss();
+            }
+        });
+
+
+    }
+
+    // ********************************** Method ****************************************** //
+
+    private void getSourceCity() {
+
+        // Add data here first and Clear
+        source_city.clear();
+        source_city.add(0, "Select Source");
+
+        searchTripInterface = APIClient.getClient().create(SearchTripInterface.class);
+
+        Call<SourceSearchModel> call = searchTripInterface.getsourcecity("Bearer " + token);
+
+        call.enqueue(new Callback<SourceSearchModel>() {
+            @Override
+            public void onResponse(Call<SourceSearchModel> call, Response<SourceSearchModel> response) {
+
+
+                if (response.toString().contains("code=200")) {
+                    Log.d(TAG, "onResponse response: " + response.body());
+                    if (response.body().getStatus() == 1) {
+
+                        SourceSearchModel sourceSearchModel = response.body();
+                        List<SourceSearchDatum> sourceSearchDatum = sourceSearchModel.getData();
+
+                        Log.d(TAG, "onResponse:sadsad " + sourceSearchDatum);
+
+
+                        ArrayList<String> citylist = new ArrayList<>();
+                        // Log.d(TAG, "onResponse:list " + citylist);
+                        for (int i = 0; i < sourceSearchDatum.size(); i++) {
+
+                            citylist.add(sourceSearchDatum.get(i).getCity());
+
+                        }
+                        citylist.add(0, "Select Source");
+
+
+                        ArrayAdapter<String> adapter1 = new ArrayAdapter<String>(
+                                getActivity(), R.layout.spinners_layout,
+                                citylist
+                        );
+
+                        //set adapter to spinner
+                        spinner_source.setAdapter(adapter1);
+                        linearLayout.setVisibility(View.VISIBLE);
+                        progress.dismiss();
+
+
+                    } else if (response.body().getStatus() == 0) {
+                        Toast.makeText(getActivity(), "" + response.body().getMsg(), Toast.LENGTH_SHORT).show();
+
+                    }
+                } else if (response.toString().contains("code=401")) {
+
+                    progress.dismiss();
+
+                    LayoutInflater factory = LayoutInflater.from(getActivity());
+                    final View deleteDialogView = factory.inflate(R.layout.raw_for_session_expired, null);
+                    final AlertDialog deleteDialog = new AlertDialog.Builder(getActivity()).create();
+                    deleteDialog.setView(deleteDialogView);
+
+                    deleteDialogView.findViewById(R.id.session_exp_login).setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+
+                            session.setLoggedin(false);
+                            getActivity().finish();
+                            Intent i = new Intent(getActivity(), LoginActivity.class);
+                            startActivity(i);
+
+                        }
+                    });
+
+
+                    deleteDialog.show();
+                    deleteDialog.setCancelable(false);
+
+
+                }
+
+
+            }
+
+            @Override
+            public void onFailure(Call<SourceSearchModel> call, Throwable t) {
+
+                progress.dismiss();
+
+            }
+        });
+
+    }
+
+    protected void showToast(String text) {
+        Snackbar snackbar = Snackbar
+                .make(search_frag_layout, text, Snackbar.LENGTH_LONG);
+        snackbar.show();
+    }
+}
+
+
+
+
+                       ************************** XML *************************************
+                       
+                       
+<?xml version="1.0" encoding="utf-8"?>
+
+
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+    <!--<android.support.v4.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+        android:layout_width="match_parent"
+        android:fillViewport="true"
+        android:orientation="vertical"
+        android:layout_height="match_parent">-->
+
+    <android.support.design.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+        xmlns:app="http://schemas.android.com/apk/res-auto"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:id="@+id/search_frag_layout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:clickable="true"
+        android:fitsSystemWindows="true"
+        tools:context=".searchtrips.SearchTripsFragment">
+
+
+        <!--<android.support.design.widget.AppBarLayout
+            android:id="@+id/app_bar_layout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fitsSystemWindows="true"
+            android:background="@color/white">
+    
+        <android.support.design.widget.CollapsingToolbarLayout
+            android:id="@+id/collapsing_toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:layout_scrollFlags="scroll|exitUntilCollapsed">-->
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/parent_lyt"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_t_5"
+                    android:gravity="center"
+                    android:orientation="horizontal"
+                    android:paddingLeft="@dimen/padding_10">
+
+
+                    <ImageView
+                        android:layout_width="@dimen/width_25"
+                        android:layout_height="@dimen/height_25"
+                        android:layout_margin="@dimen/margin_2"
+                        android:src="@drawable/ic_pin_green" />
+
+                    <com.toptoche.searchablespinnerlibrary.SearchableSpinner
+                        android:id="@+id/spinner_source"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginLeft="@dimen/margin_l_15"
+                        android:layout_marginTop="@dimen/margin_t_5"
+                        android:layout_marginRight="@dimen/margin_r_25"
+                        android:layout_marginBottom="@dimen/margin_b_5"
+                        android:background="@color/colorPrimary"
+                        android:gravity="start"
+                        android:padding="@dimen/padding_2"
+                        android:popupBackground="@color/white"
+                        android:textAlignment="textStart" />
+
+
+                </LinearLayout>
+
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:orientation="horizontal"
+                    android:paddingLeft="@dimen/padding_10">
+
+
+                    <ImageView
+                        android:layout_width="@dimen/width_25"
+                        android:layout_height="@dimen/height_25"
+                        android:layout_margin="@dimen/margin_2"
+                        android:src="@drawable/ic_pin_red" />
+
+                    <com.toptoche.searchablespinnerlibrary.SearchableSpinner
+                        android:id="@+id/spinner_destination"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginLeft="@dimen/margin_l_15"
+                        android:layout_marginTop="@dimen/margin_t_5"
+                        android:layout_marginRight="@dimen/margin_r_25"
+                        android:layout_marginBottom="@dimen/margin_b_5"
+                        android:background="@color/colorPrimary"
+                        android:gravity="start"
+                        android:padding="@dimen/padding_1"
+                        android:popupBackground="@color/white"
+                        android:textAlignment="textStart" />
+
+
+                </LinearLayout>
+
+
+                <TextView
+                    android:id="@+id/search_trip_searchBtn"
+                    android:layout_width="@dimen/width_180"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:layout_marginLeft="@dimen/margin_10"
+                    android:layout_marginTop="5dp"
+                    android:layout_marginRight="@dimen/margin_t_10"
+                    android:background="@drawable/rounded_background"
+                    android:padding="@dimen/padding_8"
+                    android:text="Search"
+                    android:textAlignment="center"
+                    android:textColor="@color/white" />
+
+
+            </LinearLayout>
+
+
+            <!-- </android.support.design.widget.CollapsingToolbarLayout>
+         
+             </android.support.design.widget.AppBarLayout>-->
+
+
+            <RelativeLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+
+                <RelativeLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <android.support.v4.widget.SwipeRefreshLayout xmlns:android="http://schemas.android.com/apk/res/android"
+                        android:id="@+id/swipe_container"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content">
+
+                        <android.support.v7.widget.RecyclerView
+                            android:id="@+id/recyclerview_search_trip_list"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="@color/grey_5"
+                            android:padding="@dimen/padding_10"></android.support.v7.widget.RecyclerView>
+
+                    </android.support.v4.widget.SwipeRefreshLayout>
+
+                    <ProgressBar
+                        android:id="@+id/page_progress"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_alignParentBottom="true"
+                        android:layout_centerHorizontal="true"
+                        android:layout_gravity="center_horizontal"
+                        android:indeterminateTint="@color/colorPrimary"
+                        android:visibility="gone" />
+                </RelativeLayout>
+
+
+                <TextView
+                    android:id="@+id/textview_no_data"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="@dimen/padding_10"
+                    android:fontFamily="@font/montserrat_semibold"
+                    android:padding="@dimen/padding_10"
+                    android:text="No Data Available..."
+                    android:textAlignment="center"
+                    android:visibility="gone" />
+
+            </RelativeLayout>
+
+        </LinearLayout>
+
+    </android.support.design.widget.CoordinatorLayout>
+    <!--
+    </android.support.v4.widget.NestedScrollView>
+    -->
+</LinearLayout>
+
+
+            ****************************  XML for Spinner layout  ****************************
+  
+  
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="@dimen/height_30"
+    android:fontFamily="@font/montserrat_regular"
+    android:padding="@dimen/padding_5"
+    android:drawableRight="@drawable/drop_down_icon"
+    android:textColor="#fff">
+
+</TextView>                       
+                       
+                       
+
